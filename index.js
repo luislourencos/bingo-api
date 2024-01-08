@@ -18,16 +18,37 @@ const socketIO = require('socket.io')(http, {
 var userList = [];
 var winnerFirstLine = { line: false, user: '' };
 var winnerBingo = { bingo: false, user: '' };
+var ranking = [];
 socketIO.on('connection', (socket) => {
 
     socket.on('restart', () => {
         userList = [];
         winnerFirstLine = { line: false, user: '' };
         winnerBingo = { bingo: false, user: '' };
+        const newUserList = userList.map((item) => {
+            return {...item, completed:0, card:createCard()}
+        })
+        socket.broadcast.emit('winnerFirstLine', { line: false, user: '' });
+        socket.broadcast.emit('winnerBingo', { bingo: false, user: '' });
+        socket.broadcast.emit('randomNumbers',{numbers:[]});
+        socket.broadcast.emit('userList',newUserList);
+    });
+
+    socket.on('ranking', (data) => {
+        ranking = data;
+        socket.broadcast.emit('ranking', data);
+    })  
+    
+    socket.on('resetAll', () => {
+        userList = [];
+        winnerFirstLine = { line: false, user: '' };
+        winnerBingo = { bingo: false, user: '' };
+        ranking = [];
         socket.broadcast.emit('winnerFirstLine', { line: false, user: '' });
         socket.broadcast.emit('winnerBingo', { bingo: false, user: '' });
         socket.broadcast.emit('randomNumbers',{numbers:[]});
         socket.broadcast.emit('userList', []);
+        socket.broadcast.emit('ranking', []);
     });
 
     socket.on('winnerFirstLine', (data) => {
@@ -37,7 +58,6 @@ socketIO.on('connection', (socket) => {
 
     socket.on('winnerBingo', (data) => {
         winnerBingo = data;
-        console.log('winnerBingo', data);
         socket.broadcast.emit('winnerBingo', data);
     })
 
@@ -59,11 +79,20 @@ socketIO.on('connection', (socket) => {
         socket.broadcast.emit('userList', userList);
     });
 
+    socket.on('removeUser', (data) => {
+        const { name } = data;
+        const newUserList = userList.filter((item) => item.name !== name);
+
+        userList = newUserList;
+
+        socket.broadcast.emit('userList', newUserList);
+    });
+
     socket.on('randomNumbers', (data) => {
         socket.broadcast.emit('randomNumbers', data);
     });
     socket.on('disconnect', () => {
-      console.log('🔥: A user disconnected');
+      console.log('A user disconnected');
     });
 });
 
