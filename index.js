@@ -51,6 +51,10 @@ socketIO.on('connection', (socket) => {
         socket.broadcast.emit('ranking', []);
     });
 
+    socket.on('priceCard', data => {
+        socket.broadcast.emit('priceCard', data);
+    })
+
     socket.on('winnerFirstLine', (data) => {
         winnerFirstLine = data;
         socket.broadcast.emit('winnerFirstLine', data);
