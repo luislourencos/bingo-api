@@ -19,7 +19,7 @@ var userList = [];
 var winnerFirstLine = { line: false, user: '' };
 var winnerBingo = { bingo: false, user: '' };
 var ranking = [];
-var priceCard = 0;
+var priceCard = 0.15;
 socketIO.on('connection', (socket) => {
     socket.on('userEnter', () => {
         socket.broadcast.emit('ranking', ranking);
@@ -40,12 +40,7 @@ socketIO.on('connection', (socket) => {
         socket.broadcast.emit('priceCard', priceCard);
         socket.broadcast.emit('restart', true);
     });
-
-    // socket.on('ranking', (data) => {
-    //     ranking = data;
-    //     socket.broadcast.emit('ranking', data);
-    // })  
-    
+ 
     socket.on('resetAll', () => {
         userList = [];
         winnerFirstLine = { line: false, user: '' };
