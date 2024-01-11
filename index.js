@@ -19,25 +19,32 @@ var userList = [];
 var winnerFirstLine = { line: false, user: '' };
 var winnerBingo = { bingo: false, user: '' };
 var ranking = [];
+var priceCard = 0;
 socketIO.on('connection', (socket) => {
-
+    socket.on('userEnter', () => {
+        socket.broadcast.emit('ranking', ranking);
+        socket.broadcast.emit('priceCard', priceCard);
+        socket.broadcast.emit('userList', userList);
+    });
     socket.on('restart', () => {
-        userList = [];
         winnerFirstLine = { line: false, user: '' };
         winnerBingo = { bingo: false, user: '' };
         const newUserList = userList.map((item) => {
-            return {...item, completed:0, card:createCard()}
+            return {...item, completed:0, card: createCard()}
         })
         socket.broadcast.emit('winnerFirstLine', { line: false, user: '' });
         socket.broadcast.emit('winnerBingo', { bingo: false, user: '' });
         socket.broadcast.emit('randomNumbers',{numbers:[]});
-        socket.broadcast.emit('userList',newUserList);
+        socket.broadcast.emit('userList', newUserList);
+        socket.broadcast.emit('ranking', ranking);
+        socket.broadcast.emit('priceCard', priceCard);
+        socket.broadcast.emit('restart', true);
     });
 
-    socket.on('ranking', (data) => {
-        ranking = data;
-        socket.broadcast.emit('ranking', data);
-    })  
+    // socket.on('ranking', (data) => {
+    //     ranking = data;
+    //     socket.broadcast.emit('ranking', data);
+    // })  
     
     socket.on('resetAll', () => {
         userList = [];
@@ -48,21 +55,41 @@ socketIO.on('connection', (socket) => {
         socket.broadcast.emit('winnerBingo', { bingo: false, user: '' });
         socket.broadcast.emit('randomNumbers',{numbers:[]});
         socket.broadcast.emit('userList', []);
-        socket.broadcast.emit('ranking', []);
+        socket.broadcast.emit('resetAll', true);
+        socket.broadcast.emit('priceCard', 0);
     });
 
     socket.on('priceCard', data => {
+        priceCard = data;
         socket.broadcast.emit('priceCard', data);
     })
 
     socket.on('winnerFirstLine', (data) => {
         winnerFirstLine = data;
+       
+        const index = ranking.findIndex((item) => item.name === data.name);
+        if (index !== -1) {
+            ranking[index] = {...data, price: ranking[index].price + data.price};
+        } else {
+            ranking.push({ ...data, price: data.price});
+        }
+
         socket.broadcast.emit('winnerFirstLine', data);
+        socket.broadcast.emit('ranking', ranking);
     })
 
     socket.on('winnerBingo', (data) => {
         winnerBingo = data;
+        // add to ranking if not exist user add to ranking else update price
+        const index = ranking.findIndex((item) => item.name === data.name);
+        if (index !== -1) {
+            ranking[index] = {...data, price: ranking[index].price + data.price};
+        } else {
+            ranking.push({ ...data, price: data.price});
+        }
+
         socket.broadcast.emit('winnerBingo', data);
+        socket.broadcast.emit('ranking', ranking);
     })
 
     socket.on('user', (data) => {
@@ -81,6 +108,7 @@ socketIO.on('connection', (socket) => {
         }
      
         socket.broadcast.emit('userList', userList);
+        socket.broadcast.emit('ranking', ranking);
     });
 
     socket.on('removeUser', (data) => {
@@ -94,9 +122,6 @@ socketIO.on('connection', (socket) => {
 
     socket.on('randomNumbers', (data) => {
         socket.broadcast.emit('randomNumbers', data);
-    });
-    socket.on('disconnect', () => {
-      console.log('A user disconnected');
     });
 });
 
