@@ -1,22 +1,29 @@
 
+const ROWS = 3;
+const COLS = 5;
+const MAX_NUMBER = 50;
+
 function createCard() {
-    const arrNumberBingoCart = [0];
-    const bingoCard = [
-        [],[],[]
-    ];
-    for (let i = 0; i < 3; i++) {
-        for (let j = 0; j < 5; j++) {
+    const used = new Set();
+    const bingoCard = [];
+
+    for (let i = 0; i < ROWS; i++) {
+        const row = [];
+        for (let j = 0; j < COLS; j++) {
+            let number;
             do {
-                var number = Math.floor((Math.random() * 50) + 1);
-            } while (arrNumberBingoCart.includes(number));
-            arrNumberBingoCart.push(number);
-            bingoCard[i][j] = { number, matched: false };
+                number = Math.floor(Math.random() * MAX_NUMBER) + 1;
+            } while (used.has(number));
+            used.add(number);
+            row.push({ number, matched: false });
         }
-       
+        bingoCard.push(row);
     }
-    return bingoCard
-};
+
+    return bingoCard;
+}
 
 module.exports = {
-    createCard: createCard
-}
+    createCard,
+    CELLS_PER_CARD: ROWS * COLS,
+};
