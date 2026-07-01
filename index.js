@@ -208,6 +208,24 @@ socketIO.on('connection', (socket) => {
         socket.to(roomId).emit('randomNumbers', data);
     });
 
+    // Route an animation (cat / flip screen) to a specific player in the room.
+    // We emit only to the target's socket(s) (a player may have several tabs
+    // open) so the animation plays on their screen, not everyone's.
+    const sendToUser = (event, to) => {
+        const roomId = socket.data.roomId;
+        if (!roomId || !to) return;
+        const from = socketUser.get(socket.id)?.name;
+        for (const [socketId, entry] of socketUser.entries()) {
+            if (entry.roomId === roomId && entry.name === to) {
+                socketIO.to(socketId).emit(event, { from });
+            }
+        }
+    };
+
+    socket.on('sendCat', (data) => sendToUser('receiveCat', (data || {}).to));
+    socket.on('sendFlip', (data) => sendToUser('receiveFlip', (data || {}).to));
+    socket.on('sendHide', (data) => sendToUser('receiveHide', (data || {}).to));
+
     // Drop the player from their room when their socket goes away.
     socket.on('disconnect', () => {
         const entry = socketUser.get(socket.id);
