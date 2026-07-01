@@ -9,6 +9,10 @@ const { env: { PORT } } = process;
 app.use(cors());
 
 const socketIO = require('socket.io')(http, {
+    // WebSocket only: skip the initial HTTP long-polling transport. Lowers
+    // per-connection overhead and avoids needing sticky sessions behind a load
+    // balancer (e.g. Render) if the service ever runs more than one instance.
+    transports: ['websocket'],
     cors: {
         origin: "*",
         credentials: true
@@ -49,6 +53,50 @@ function getRoom(roomId) {
 // socket.id -> { name, roomId }, so we can clean up players when they disconnect.
 const socketUser = new Map();
 
+// Players only render each other's name/avatar/progress, so they get a slim
+// list without the (larger) card. Only the admin needs every player's full
+// card to render the board, so the admin joins a dedicated sub-room.
+const adminRoom = (roomId) => `${roomId}:admin`;
+const slimUserList = (state) => state.userList.map(({ card, ...rest }) => rest);
+
+// Emit the room's user list: slim to players, full to the admin sub-room.
+function emitUserList(roomId) {
+    const state = rooms.get(roomId);
+    if (!state) return;
+    socketIO.to(roomId).except(adminRoom(roomId)).emit('userList', slimUserList(state));
+    socketIO.to(adminRoom(roomId)).emit('userList', state.userList);
+}
+
+// Many players mark cells almost simultaneously; instead of broadcasting the
+// whole list once per mark, coalesce a burst into a single emit per room.
+const USER_LIST_DEBOUNCE_MS = 120;
+const userListTimers = new Map(); // roomId -> timeout
+
+function scheduleUserListBroadcast(roomId) {
+    if (userListTimers.has(roomId)) return; // one already pending
+    const timer = setTimeout(() => {
+        userListTimers.delete(roomId);
+        emitUserList(roomId);
+    }, USER_LIST_DEBOUNCE_MS);
+    userListTimers.set(roomId, timer);
+}
+
+// Cancel any pending debounced broadcast for a room (call before emitting now
+// or when the room is torn down, so a stale timer never fires / recreates it).
+function cancelUserListBroadcast(roomId) {
+    const timer = userListTimers.get(roomId);
+    if (timer) {
+        clearTimeout(timer);
+        userListTimers.delete(roomId);
+    }
+}
+
+// Emit immediately, dropping any pending debounced broadcast for the room.
+function emitUserListNow(roomId) {
+    cancelUserListBroadcast(roomId);
+    emitUserList(roomId);
+}
+
 // Add the winner to the ranking, accumulating the price if it already exists.
 function upsertRanking(state, data) {
     const index = state.ranking.findIndex((item) => item.name === data.name);
@@ -72,7 +120,7 @@ socketIO.on('connection', (socket) => {
     // Join a room and send that room's current state to the socket that
     // just entered (not broadcast to the rest). Both players and the admin
     // call this with the room id taken from the URL.
-    socket.on('joinRoom', (roomId) => {
+    socket.on('joinRoom', (roomId, isAdmin) => {
         // Never trust the client: validate the id format server-side too.
         if (!ROOM_ID_REGEX.test(roomId || '')) {
             socket.emit('joinError', 'Id de sala no válido');
@@ -86,14 +134,18 @@ socketIO.on('connection', (socket) => {
         // Leave any previous room so a socket only ever belongs to one game.
         if (socket.data.roomId && socket.data.roomId !== roomId) {
             socket.leave(socket.data.roomId);
+            socket.leave(adminRoom(socket.data.roomId));
         }
         socket.join(roomId);
         socket.data.roomId = roomId;
+        // Only the admin joins the admin sub-room (and thus gets full cards).
+        socket.data.isAdmin = !!isAdmin;
+        if (isAdmin) socket.join(adminRoom(roomId));
 
         const state = getRoom(roomId);
         socket.emit('ranking', state.ranking);
         socket.emit('priceCard', state.priceCard);
-        socket.emit('userList', state.userList);
+        socket.emit('userList', isAdmin ? state.userList : slimUserList(state));
         socket.emit('winnerFirstLine', state.winnerFirstLine);
         socket.emit('winnerBingo', state.winnerBingo);
         socket.emit('randomNumbers', state.randomNumbers);
@@ -112,7 +164,7 @@ socketIO.on('connection', (socket) => {
         socketIO.to(roomId).emit('winnerFirstLine', state.winnerFirstLine);
         socketIO.to(roomId).emit('winnerBingo', state.winnerBingo);
         socketIO.to(roomId).emit('randomNumbers', state.randomNumbers);
-        socketIO.to(roomId).emit('userList', state.userList);
+        emitUserListNow(roomId);
         socketIO.to(roomId).emit('ranking', state.ranking);
         socketIO.to(roomId).emit('priceCard', state.priceCard);
         socketIO.to(roomId).emit('restart', true);
@@ -131,7 +183,10 @@ socketIO.on('connection', (socket) => {
         socketIO.to(roomId).emit('winnerFirstLine', state.winnerFirstLine);
         socketIO.to(roomId).emit('winnerBingo', state.winnerBingo);
         socketIO.to(roomId).emit('randomNumbers', state.randomNumbers);
-        socketIO.to(roomId).emit('userList', state.userList);
+        emitUserListNow(roomId);
+        // Push the emptied ranking too, otherwise the admin's Ranking (which
+        // only updates from this event) keeps showing the old scores.
+        socketIO.to(roomId).emit('ranking', state.ranking);
         socketIO.to(roomId).emit('resetAll', true);
         socketIO.to(roomId).emit('priceCard', state.priceCard);
     });
@@ -188,8 +243,9 @@ socketIO.on('connection', (socket) => {
 
         socketUser.set(socket.id, { name, roomId });
         // Ranking is unchanged here, so we don't re-broadcast it (saves traffic
-        // on every cell the player marks).
-        socket.to(roomId).emit('userList', state.userList);
+        // on every cell the player marks). The user list broadcast is debounced
+        // to coalesce the burst of marks happening across the room.
+        scheduleUserListBroadcast(roomId);
     });
 
     socket.on('removeUser', (data) => {
@@ -198,7 +254,7 @@ socketIO.on('connection', (socket) => {
         const state = getRoom(roomId);
         const { name } = data;
         state.userList = state.userList.filter((item) => item.name !== name);
-        socket.to(roomId).emit('userList', state.userList);
+        emitUserListNow(roomId);
     });
 
     socket.on('randomNumbers', (data) => {
@@ -241,7 +297,7 @@ socketIO.on('connection', (socket) => {
             if (!stillConnected && rooms.has(entry.roomId)) {
                 const state = rooms.get(entry.roomId);
                 state.userList = state.userList.filter((item) => item.name !== name);
-                socket.to(entry.roomId).emit('userList', state.userList);
+                emitUserListNow(entry.roomId);
             }
         }
 
@@ -250,6 +306,7 @@ socketIO.on('connection', (socket) => {
             const remaining = socketIO.sockets.adapter.rooms.get(roomId);
             if (!remaining || remaining.size === 0) {
                 rooms.delete(roomId);
+                cancelUserListBroadcast(roomId);
             }
         }
     });
